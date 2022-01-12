@@ -7,9 +7,11 @@ import javax.servlet.*;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.annotation.Annotation;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.Enumeration;
 
 public class Dispatcher implements Filter {
 
@@ -77,19 +79,40 @@ public class Dispatcher implements Filter {
             // RequestMapping 어노테이션이 붙은 메소드를 찾아야 한다
             Annotation annotation = method.getDeclaredAnnotation(RequestMapping.class);
 
-
             // annotation을 RequestMapping으로 다운캐스팅 해야 한다.
             RequestMapping requestMapping = (RequestMapping) annotation;
 
-            // RequestMapping 어노테이션에 들어간 String 값을 확인한다. -> 매핑할 endPoint 값이다다
-            System.out.println(requestMapping.value());
+            // RequestMapping 어노테이션에 들어간 String 값을 확인한다. -> 매핑할 endPoint 값이다
+//            System.out.println(requestMapping.value());
 
-            // endpoint와 같은 value를 갖는 어노테이션을 찾으면 메소드 실행 후 반복문 탈출출
+            // RequestMapping 어노테이션의 value값과 동일한 endPoint를 찾으면 메소드 실행 후 반복문 탈출
             if (requestMapping.value().equals(endPoint)) {
                 try {
+                    // 1. 파라미터 분석
+                    Parameter[] parameters = method.getParameters();
+                    String path = null;
 
-                    // UserController의 메소드를 실행시킨 후, return 값을 path변수에 담는다.
-                    String path = (String) method.invoke(userController);
+                    if (parameters.length != 0) {
+//                        System.out.println("parameters[0].getType() : " + parameters[0].getType());
+
+                        // 파라미터의 타입으로 객체 생성
+                        Object dtoInstance = parameters[0].getType().newInstance();
+
+//                        String username = req.getParameter("username");
+//                        String password = req.getParameter("password");
+//                        System.out.println("username : " + username);
+//                        System.out.println("password : " + password);
+
+                        // Object를 분석하여 setter함수에 값을 넣어준다.
+                        setData(dtoInstance, req);
+
+                        // dtoInstance 를 userController 메소드의 인자값으로 넘겨서 실행한다
+                        path = (String) method.invoke(userController, dtoInstance);
+
+                    } else {
+                        // UserController의 메소드를 실행시킨 후, return 값을 path변수에 담는다.
+                        path = (String) method.invoke(userController);
+                    }
 
                     // RequestDispatcher을 통해 path로 forward하면 필터를 거치지 않는다 (내부에서 이루어지기 때문)
                     RequestDispatcher requestDispatcher = req.getRequestDispatcher(path);
@@ -101,6 +124,41 @@ public class Dispatcher implements Filter {
             }
         }
 
+        res.setContentType("text/html; charset=utf-8");
+        PrintWriter writer = res.getWriter();
+        writer.println("잘못된 주소 요청입니다. 404 error");
+        writer.flush();
+    }
 
+    // 파라미터 이름을 기반으로 setter 함수를 찾아 해당 파라미터를 넣어준다.
+    private <T> void setData(T dtoInstance, HttpServletRequest req) {
+        // parameterNames 값을 변형하여 Object의 setter 메소드 이름과 비교해야한다.
+        Enumeration<String> keys = req.getParameterNames();
+
+        while (keys.hasMoreElements()) {
+            String key = (String) keys.nextElement(); // 파라미터 이름
+            String methodKey = keyToMethodKey(key); // set파라미터이름
+
+            Method[] methods = dtoInstance.getClass().getDeclaredMethods();
+            for (Method method : methods) {
+                if (method.getName().equals(methodKey)) { // setter 메소드를 찾는다
+                    try {
+                        // setter 메소드 파라미터에 req.getParameter(key)를 집어넣고 실행한다
+                        method.invoke(dtoInstance, req.getParameter(key));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private String keyToMethodKey(String key) {
+        String firstKey = "set";
+        String upperKey = key.substring(0, 1).toUpperCase();
+        String remainKey = key.substring(1);
+
+        return firstKey + upperKey + remainKey;
     }
 }
